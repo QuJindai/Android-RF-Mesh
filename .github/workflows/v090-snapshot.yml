@@ -1,0 +1,57 @@
+name: V0.9 Snapshot CI
+
+on:
+  push:
+    branches: [ feat/v090-observation-aware-sensing ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-and-build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work
+          base64 -d snapshots/Android-RF-Mesh-v0.9.0-source.tar.xz.b64 > /tmp/android-rf-mesh-v090.tar.xz
+          tar -xJf /tmp/android-rf-mesh-v090.tar.xz -C work
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install Android SDK 35
+        shell: bash
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0"
+      - name: Verify source gates
+        working-directory: work
+        run: ./scripts/test-all.sh
+      - name: Build V0.9 APK
+        working-directory: work
+        env:
+          ARFM_VERSION_NAME: 0.9.0
+          ARFM_VERSION_CODE: 900
+          ARFM_APK_OUT: ${{ github.workspace }}/work/build/Android-RF-Mesh-v0.9.0-official.apk
+        run: |
+          ./scripts/build-apk.sh | tee build-apk.log
+          APK=build/Android-RF-Mesh-v0.9.0-official.apk
+          test -s "$APK"
+          python3 scripts/verify-apk-launcher.py "$APK" "$ANDROID_HOME/build-tools/35.0.0/aapt2" "$ANDROID_HOME/build-tools/35.0.0/dexdump"
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -p 4 "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$APK" | grep -F "versionCode='900' versionName='0.9.0'"
+          sha256sum "$APK" | tee "$APK.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Android-RF-Mesh-v0.9.0-official
+          path: |
+            work/build/Android-RF-Mesh-v0.9.0-official.apk
+            work/build/Android-RF-Mesh-v0.9.0-official.apk.sha256
+            work/build-apk.log
+          if-no-files-found: error
